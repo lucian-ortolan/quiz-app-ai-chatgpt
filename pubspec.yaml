@@ -19,6 +19,12 @@ flutter:
   assets:
     - .env
 
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+
 dev_dependencies:
   lints: ^5.0.0
   test: ^1.24.0
+  flutter_launcher_icons: ^0.10.0

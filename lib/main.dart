@@ -1,5 +1,3 @@
-// lib/main.dart
-
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -20,6 +18,32 @@ class QuizAIApp extends StatelessWidget {
       theme: ThemeData(primarySwatch: Colors.blue),
       home: const HomeScreen(),
     );
+  }
+}
+
+enum DifficultyLevel { facil, medio, avancado }
+
+extension DifficultyLevelExt on DifficultyLevel {
+  String get label {
+    switch (this) {
+      case DifficultyLevel.facil:
+        return 'Fácil';
+      case DifficultyLevel.medio:
+        return 'Médio';
+      case DifficultyLevel.avancado:
+        return 'Avançado';
+    }
+  }
+
+  String get promptText {
+    switch (this) {
+      case DifficultyLevel.facil:
+        return 'fácil';
+      case DifficultyLevel.medio:
+        return 'médio';
+      case DifficultyLevel.avancado:
+        return 'avançado';
+    }
   }
 }
 
@@ -52,18 +76,56 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   QuizQuestion? _quiz;
   bool _isLoading = false;
-  final List<String> _askedQuestions = []; // histórico de perguntas
+  DifficultyLevel? _selectedLevel;
+
+  final Map<DifficultyLevel, List<String>> _askedPerLevel = {
+    DifficultyLevel.facil: [],
+    DifficultyLevel.medio: [],
+    DifficultyLevel.avancado: [],
+  };
+
+  final Map<DifficultyLevel, int> _acertos = {
+    DifficultyLevel.facil: 0,
+    DifficultyLevel.medio: 0,
+    DifficultyLevel.avancado: 0,
+  };
+
+  final Map<DifficultyLevel, int> _erros = {
+    DifficultyLevel.facil: 0,
+    DifficultyLevel.medio: 0,
+    DifficultyLevel.avancado: 0,
+  };
 
   Future<void> _getQuestion() async {
+    if (_selectedLevel == null) return;
+
     setState(() {
       _isLoading = true;
       _quiz = null;
     });
+
     try {
-      final q = await fetchQuizQuestion(_askedQuestions);
+      final previous = _askedPerLevel[_selectedLevel!]!;
+      const int maxTentativas = 10;
+      int tentativas = 0;
+      QuizQuestion? novaPergunta;
+
+      while (tentativas < maxTentativas) {
+        final q = await fetchQuizQuestion(previous, _selectedLevel!);
+        if (!previous.contains(q.question)) {
+          novaPergunta = q;
+          break;
+        }
+        tentativas++;
+      }
+
+      if (novaPergunta == null) {
+        throw Exception('Não foi possível obter uma pergunta nova após $maxTentativas tentativas.');
+      }
+
       setState(() {
-        _quiz = q;
-        _askedQuestions.add(q.question);
+        _quiz = novaPergunta;
+        previous.add(novaPergunta!.question);
       });
     } catch (e) {
       setState(() {
@@ -81,50 +143,84 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onOptionTap(int idx) {
-  if (_quiz == null || _quiz!.correctIndex < 0) return;
-  
-  final chosenText   = _quiz!.options[idx];
-  final correctText  = _quiz!.options[_quiz!.correctIndex];
-  final isCorrect    = idx == _quiz!.correctIndex;
-  final chosenNumber = idx + 1;
-  final correctNumber= _quiz!.correctIndex + 1;
+    if (_quiz == null || _quiz!.correctIndex < 0 || _selectedLevel == null) return;
 
-  showDialog(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: Text(isCorrect ? '🎉 Acertou!' : '❌ Errou'),
-      content: Text(
-        isCorrect
-          ? 'Parabéns, a opção $chosenNumber – "$chosenText" está correta.'
-          : 'Resposta correta: opção $correctNumber – "$correctText".',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            Navigator.pop(context);
-            _getQuestion();
-          },
-          child: const Text('Próxima'),
+    final chosenText = _quiz!.options[idx];
+    final correctText = _quiz!.options[_quiz!.correctIndex];
+    final isCorrect = idx == _quiz!.correctIndex;
+    final chosenNumber = idx + 1;
+    final correctNumber = _quiz!.correctIndex + 1;
+
+    setState(() {
+      if (isCorrect) {
+        _acertos[_selectedLevel!] = _acertos[_selectedLevel!]! + 1;
+      } else {
+        _erros[_selectedLevel!] = _erros[_selectedLevel!]! + 1;
+      }
+    });
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(isCorrect ? '🎉 Acertou!' : '❌ Errou'),
+        content: Text(
+          isCorrect
+              ? 'Parabéns, a opção $chosenNumber – "$chosenText" está correta.'
+              : 'Resposta correta: opção $correctNumber – "$correctText".',
         ),
-      ],
-    ),
-  );
-}
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _getQuestion();
+            },
+            child: const Text('Próxima'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     Widget body;
-    if (_isLoading) {
+
+    if (_selectedLevel == null) {
+      body = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: DifficultyLevel.values.map((level) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: ElevatedButton(
+              onPressed: () {
+                setState(() => _selectedLevel = level);
+                _getQuestion();
+              },
+              child: Text(level.label),
+            ),
+          );
+        }).toList(),
+      );
+    } else if (_isLoading) {
       body = const CircularProgressIndicator();
     } else if (_quiz == null) {
       body = ElevatedButton(
         onPressed: _getQuestion,
-        child: const Text('Começar Quiz'),
+        child: const Text('Nova Pergunta'),
       );
     } else {
       body = Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Text(
+            'Nível: ${_selectedLevel!.label}',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            '✅ Acertos: ${_acertos[_selectedLevel!]}   ❌ Erros: ${_erros[_selectedLevel!]}',
+            style: const TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 12),
           Text(
             _quiz!.question,
             style: const TextStyle(fontSize: 18),
@@ -147,20 +243,36 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Quiz AI')),
+      appBar: AppBar(
+        title: const Text('Quiz AI'),
+        actions: _selectedLevel != null
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Mudar Nível',
+                  onPressed: () {
+                    setState(() {
+                      _selectedLevel = null;
+                      _quiz = null;
+                    });
+                  },
+                )
+              ]
+            : null,
+      ),
       body: Center(child: body),
     );
   }
 }
 
-Future<QuizQuestion> fetchQuizQuestion(List<String> previous) async {
+Future<QuizQuestion> fetchQuizQuestion(
+    List<String> previous, DifficultyLevel nivel) async {
   const apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
   final apiKey = dotenv.env['OPENROUTER_API_KEY'];
   if (apiKey == null || apiKey.isEmpty) {
     throw Exception('OpenRouter API key não definida');
   }
 
-  // Informa ao LLM quais perguntas já foram feitas
   final historyNote = previous.isEmpty
       ? ''
       : 'Não repetir estas perguntas:\n' + previous.join('\n');
@@ -184,7 +296,8 @@ Future<QuizQuestion> fetchQuizQuestion(List<String> previous) async {
         {
           'role': 'user',
           'content':
-              '$historyNote\nGere uma nova pergunta de quiz com 4 alternativas.',
+              'Gere uma pergunta de quiz de nível ${nivel.promptText} com 4 alternativas.\n'
+              '$historyNote',
         },
       ],
       'max_tokens': 200,
@@ -197,13 +310,9 @@ Future<QuizQuestion> fetchQuizQuestion(List<String> previous) async {
 
   final utf8Body = utf8.decode(response.bodyBytes);
   final data = jsonDecode(utf8Body) as Map<String, dynamic>;
-
   final content = (data['choices'][0]['message']['content'] as String).trim();
-
-  // Caso o próprio 'content' venha com escapes Unicode (\u00e1),
-  // podemos forçar um segundo decode:
   final decodedContent = jsonDecode(jsonEncode(content)) as String;
-
   final jsonMap = jsonDecode(decodedContent) as Map<String, dynamic>;
+
   return QuizQuestion.fromJson(jsonMap);
 }
